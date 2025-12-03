@@ -7,4 +7,5 @@ reportlab
 python-dotenv
 deepface
 tf-keras
-mediapipe==0.10.15
+mediapipe
+
