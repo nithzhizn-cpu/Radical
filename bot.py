@@ -93,25 +93,25 @@ async def handle_photo(message: types.Message):
 
     await bot.download_file(file.file_path, img_path)
 
-    # --- 1. FACE (DeepFace / RetinaFace) ---
+    # --- 1. FACE ---
     face_info = detect_face_info(img_path)
     if face_info is None:
         return await message.answer(
             "⚠️ Не вдалося розпізнати обличчя.\n"
-            "Спробуй інше фото: анфас, без сильних тіней, з хорошим освітленням."
+            "Спробуй інше фото: анфас, без тіней, з хорошим світлом."
         )
 
     # --- 2. EMOTION ---
     emotion_data = interpret_emotions(face_info.get("emotion", {}))
 
-    # --- 3. STRESS (мікроміміка / напруга) ---
+    # --- 3. STRESS ---
     stress_data = detect_microstress(img_path)
 
-    # --- 4. PERSONALITY (Big Five + радикал Пономаренка) ---
-    personality = build_personality_profile(face_info, emotion_data, stress_data, physiognomy)
-
-    # --- 5. PHYSIOGNOMY ---
+    # --- 4. PHYSIOGNOMY (must be BEFORE personality) ---
     physiognomy = build_physiognomy_profile(face_info)
+
+    # --- 5. PERSONALITY (Big Five + ML Radicals) ---
+    personality = build_personality_profile(face_info, emotion_data, stress_data, physiognomy)
 
     # --- 6. PROFESSIONAL PROFILE ---
     professional = build_professional_profile(personality)
@@ -126,7 +126,7 @@ async def handle_photo(message: types.Message):
         physiognomy,
     )
 
-    # --- 8. SAVE TO DB ---
+    # --- 8. SAVE ---
     save_report(
         user_id,
         img_path,
@@ -143,32 +143,26 @@ async def handle_photo(message: types.Message):
     for i in range(0, len(full_report), chunk):
         await message.answer(full_report[i:i + chunk])
 
-    # Коротке резюме по радикалу + фізіогноміці
-    radical_code = personality.get("radical_code") or personality.get("radical_key")
-    radical_info = RADICALS.get(radical_code) if radical_code else None
+    # --- SHORT BLOCK (Radical + Physio) ---
+    radical_code = personality.get("radical_key")
+    radical_info = RADICALS.get(radical_code)
 
     short_block = ""
 
     if radical_info:
         short_block += (
             f"🧩 Радикал: *{radical_info['name']}*\n"
-            f"Коротко: {radical_info['short']}\n\n"
+            f"{radical_info['short']}\n\n"
         )
 
     if isinstance(physiognomy, dict):
-        phys_short = physiognomy.get("short_summary") or \
-                     physiognomy.get("physiog_profile_text", "")[:400]
-        if phys_short:
-            short_block += (
-                "👁 Фізіогномічний профіль (коротко):\n"
-                f"{phys_short}\n\n"
-            )
+        phys_short = physiognomy.get("short_summary", "")
+        short_block += f"👁 Фізіогноміка (коротко):\n{phys_short}\n"
 
     if short_block:
         await message.answer(short_block, parse_mode="Markdown")
 
-    await message.answer("💾 Звіт збережено. Використай /compare, щоб відстежити динаміку.")
-
+    await message.answer("💾 Звіт збережено. Використай /compare, щоб побачити зміни.")
 
 # ======================================================
 #                   COMPARE
