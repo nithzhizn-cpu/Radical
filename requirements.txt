@@ -5,9 +5,6 @@ pillow
 scikit-learn
 reportlab
 python-dotenv
-mediapipe
-opencv-python
-numpy
 deepface
 insightface
 onnxruntime
