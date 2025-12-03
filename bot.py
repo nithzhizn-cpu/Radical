@@ -1,6 +1,8 @@
 import os
 import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), "analyzer"))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(BASE_DIR)
+sys.path.append(os.path.join(BASE_DIR, "analyzer"))
 import asyncio
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
