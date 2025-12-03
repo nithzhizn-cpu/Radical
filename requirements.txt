@@ -6,5 +6,4 @@ scikit-learn
 reportlab
 python-dotenv
 deepface
-onnxruntime
 tf-keras
