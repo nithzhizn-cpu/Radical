@@ -1,107 +1,122 @@
 import cv2
-import numpy as np
-from typing import Dict
-import mediapipe as mp
+from typing import Optional, Dict, Any
+
+from deepface import DeepFace
+from insightface.app import FaceAnalysis
+
+# Глобальний інстанс моделі, щоб не вантажити її кожен раз
+_insight_app: Optional[FaceAnalysis] = None
 
 
-mp_face_detection = mp.solutions.face_detection
-mp_face_mesh = mp.solutions.face_mesh
-
-
-# ===== SIMPLE LIGHTWEIGHT EMOTION MODEL =====
-EMOTIONS = ["happy", "sad", "angry", "neutral", "fear", "surprise", "disgust"]
-
-
-def _dominant_emotion_from_face(landmarks: np.ndarray) -> str:
+def _get_insight_app() -> FaceAnalysis:
     """
-    Дуже спрощена евристична модель емоцій.
-    Працює швидко, без TensorFlow.
+    Ледача ініціалізація InsightFace (buffalo_l).
+    Працює на CPU через onnxruntime.
     """
-    if landmarks is None or len(landmarks) == 0:
-        return "neutral"
-
-    # Евристика: відкриття рота, підйом брів, форма очей.
-    # Це приблизно, але достатньо для психологічного профілю.
-    mouth_open = landmarks[13][1] - landmarks[14][1]
-    eye_left = landmarks[159][1] - landmarks[145][1]
-    eye_right = landmarks[386][1] - landmarks[374][1]
-
-    if mouth_open > 0.06:
-        return "surprise"
-    if eye_left < 0.015 and eye_right < 0.015:
-        return "angry"
-    if mouth_open < 0.015 and eye_left > 0.04:
-        return "sad"
-    if eye_left > 0.03 and mouth_open < 0.03:
-        return "fear"
-
-    return "neutral"
+    global _insight_app
+    if _insight_app is None:
+        app = FaceAnalysis(
+            name="buffalo_l",  # якісний пайплайн: детектор + age/gender + embedding
+            providers=["CPUExecutionProvider"],
+        )
+        # det_size можна зменшити, якщо будуть проблеми з ресурсами
+        app.prepare(ctx_id=0, det_size=(640, 640))
+        _insight_app = app
+    return _insight_app
 
 
-def detect_face_info(img_path: str) -> Dict:
+def _analyze_emotion(img_path: str) -> Dict[str, Any]:
     """
-    Легкий детектор лиця, який працює на Railway без важких бібліотек.
-    Повертає:
-      - приблизний вік
-      - стать
-      - емоції
-      - домінантну емоцію
-      - "раса" НЕ повертається (не потрібно моделі)
+    Окремо рахуємо емоції через DeepFace,
+    але НЕ використовуємо його стать/вік.
     """
+    emo_res = DeepFace.analyze(
+        img_path=img_path,
+        actions=["emotion"],
+        enforce_detection=True,
+    )
+    if isinstance(emo_res, list):
+        emo_res = emo_res[0]
+    emotion_raw = emo_res.get("emotion", {}) or {}
+    dominant_emo = emo_res.get("dominant_emotion", "") or ""
 
-    img = cv2.imread(img_path)
-    if img is None:
-        return None
-
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-    with mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5) as fd:
-        result = fd.process(img_rgb)
-
-        if not result.detections:
-            return None
-
-        detection = result.detections[0]
-        bbox = detection.location_data.relative_bounding_box
-
-    # Crop face for mesh
-    H, W, _ = img_rgb.shape
-    x1 = int(bbox.xmin * W)
-    y1 = int(bbox.ymin * H)
-    x2 = int((bbox.xmin + bbox.width) * W)
-    y2 = int((bbox.ymin + bbox.height) * H)
-
-    face_crop = img_rgb[max(0, y1):min(H, y2), max(0, x1):min(W, x2)]
-
-    # FACE MESH for landmarks
-    landmarks = None
-    with mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1) as mesh:
-        r = mesh.process(face_crop)
-
-        if r.multi_face_landmarks:
-            lm = r.multi_face_landmarks[0]
-            landmarks = np.array([[p.x, p.y] for p in lm.landmark])
-
-    # ===== Emotion estimation =====
-    dominant_em = _dominant_emotion_from_face(landmarks)
-
-    # ===== Fake but stable "race" (не використовується) =====
-    race = {"european": 50, "asian": 30, "african": 20}
-
-    # ===== VERY LIGHT age/sex estimation =====
-    # не точні, але стабільні й вистачає для профілю
-    approx_age = 25 + int((1 - detection.score[0]) * 20)
-    gender = "man" if bbox.width > bbox.height * 0.9 else "woman"
-
-    # ===== Emotion profile =====
-    emotion_dict = {e: 0 for e in EMOTIONS}
-    emotion_dict[dominant_em] = 100
+    # нормалізуємо ключі до lower-case
+    emotion_norm = {k.lower(): float(v) for k, v in emotion_raw.items()}
 
     return {
-        "age": approx_age,
-        "gender": gender,
-        "emotion": emotion_dict,
-        "dominant_emotion": dominant_em,
-        "race": race,
-        "dominant_race": "european"
+        "emotion": emotion_norm,
+        "dominant_emotion": dominant_emo.lower(),
     }
+
+
+def detect_face_info(img_path: str) -> Optional[Dict[str, Any]]:
+    """
+    Детальний аналіз обличчя:
+    - age / gender через InsightFace (buffalo_l)
+    - emotion через DeepFace
+    - структура на виході сумісна з рештою бота
+    """
+    try:
+        img = cv2.imread(img_path)
+        if img is None:
+            print(f"[face_detector] Cannot read image: {img_path}")
+            return None
+
+        app = _get_insight_app()
+        faces = app.get(img)
+
+        if not faces:
+            print("[face_detector] No faces detected")
+            return None
+
+        # Беремо найбільше обличчя
+        faces_sorted = sorted(
+            faces,
+            key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
+            reverse=True,
+        )
+        face = faces_sorted[0]
+
+        # ------- ВІК -------
+        age_raw = getattr(face, "age", None)
+        try:
+            age = int(age_raw) if age_raw is not None else 0
+        except Exception:
+            age = 0
+
+        # Невелика корекція віку (InsightFace іноді занижує)
+        if age > 0 and age < 30:
+            age += 5
+
+        # ------- СТАТЬ -------
+        # InsightFace: gender = 0 (female), 1 (male)
+        gender_raw = getattr(face, "gender", None)
+
+        if gender_raw == 1:
+            gender = "man"
+        elif gender_raw == 0:
+            gender = "woman"
+        else:
+            gender = "unknown"
+
+        # ------- ЕМОЦІЇ -------
+        emo_info = _analyze_emotion(img_path)
+        emotion_dict = emo_info["emotion"]
+        dominant_emo = emo_info["dominant_emotion"]
+
+        # Ми расу не використовуємо — повертаємо заглушки
+        race_dict: Dict[str, float] = {}
+        dominant_race = ""
+
+        return {
+            "age": age,
+            "gender": gender,          # "man"/"woman"/"unknown"
+            "emotion": emotion_dict,   # dict з імовірностями
+            "dominant_emotion": dominant_emo,
+            "race": race_dict,
+            "dominant_race": dominant_race,
+        }
+
+    except Exception as e:
+        print(f"[face_detector] ERROR: {e}")
+        return None
