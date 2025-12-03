@@ -3,7 +3,7 @@ import sys
 import asyncio
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from analyzer.radical_test import QUESTIONS, RADICALS, build_keyboard, compute_result
+
 # ======================================================
 #              FIX PYTHON PATH (Railway FIX)
 # ======================================================
@@ -169,34 +169,7 @@ async def compare(message: types.Message):
 
     await message.answer(result)
 
-@dp.message(Command("radical_test"))
-async def start_radical_test(message: types.Message, state: FSMContext):
-    await state.update_data(step=0, results=RADICALS.copy())
-    q = QUESTIONS[0]
-    await message.answer(q["text"], reply_markup=build_keyboard(q["options"], 0))
-    
-@dp.callback_query(F.data.startswith("rad_"))
-async def process_radical_answer(callback: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    step, results = data["step"], data["results"]
 
-    _, qid, answer = callback.data.split("_", 2)
-    qid = int(qid)
-
-    effects = QUESTIONS[qid]["options"][answer]
-    for r, val in effects.items():
-        results[r] += val
-
-    step += 1
-    await state.update_data(step=step, results=results)
-
-    if step >= len(QUESTIONS):
-        await callback.message.answer(compute_result(results))
-        await state.clear()
-        return
-
-    next_q = QUESTIONS[step]
-    await callback.message.answer(next_q["text"], reply_markup=build_keyboard(next_q["options"], step))
 # ======================================================
 #                     ADMIN SUMMARY
 # ======================================================
