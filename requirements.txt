@@ -1,5 +1,7 @@
 aiogram==3.4.1
 opencv-python
-deepface
 numpy
-Pillow
+pillow
+scikit-learn
+reportlab
+python-dotenv
