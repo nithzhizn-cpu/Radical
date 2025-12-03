@@ -1,65 +1,58 @@
-# analyzer/face_detector.py
-
-from typing import Optional, Dict, Any
+import cv2
 from deepface import DeepFace
 
 
-def detect_face_info(img_path: str) -> Optional[Dict[str, Any]]:
+def detect_face_info(img_path: str):
     """
-    Аналіз обличчя на основі стеку:
-    - Детектор: RetinaFace (через DeepFace)
-    - Емоції: модель DeepFace (аналог FER+)
-    - Вік, стать, расовий профіль — з вбудованих моделей DeepFace.
-
-    Повертає:
-        {
-            "age": int,
-            "gender": str,
-            "emotion": dict,
-            "dominant_emotion": str,
-            "race": dict,
-            "dominant_race": str
-        }
-    або None, якщо обличчя не знайдено / помилка.
+    Повертає детальну інформацію про обличчя:
+    вік, стать, емоції, расовий тип, домінантну емоцію.
+    Використовує DeepFace.analyze без параметра prog_bar,
+    щоб працювати з різними версіями бібліотеки.
     """
     try:
+        # ✅ Варіант 1 — стандартний виклик без prog_bar
         result = DeepFace.analyze(
             img_path=img_path,
             actions=["emotion", "age", "gender", "race"],
-            detector_backend="retinaface",  # RetinaFace як детектор
-            enforce_detection=True,
-            prog_bar=False,
+            enforce_detection=True
         )
 
-        # DeepFace іноді повертає список результатів (для кількох облич)
-        if isinstance(result, list):
-            result = result[0]
-
-        age = int(result.get("age", 0)) if result.get("age") is not None else 0
-        gender = str(result.get("gender", "") or "")
-
-        emotion_raw = result.get("emotion") or {}
-        if not isinstance(emotion_raw, dict):
-            emotion_raw = {}
-
-        dominant_emotion = str(result.get("dominant_emotion", "") or "")
-
-        race_raw = result.get("race") or {}
-        if not isinstance(race_raw, dict):
-            race_raw = {}
-
-        dominant_race = str(result.get("dominant_race", "") or "")
-
-        return {
-            "age": age,
-            "gender": gender,
-            "emotion": emotion_raw,
-            "dominant_emotion": dominant_emotion,
-            "race": race_raw,
-            "dominant_race": dominant_race,
-        }
-
+    except TypeError:
+        # ✅ На випадок, якщо сигнатура ще інша — робимо мінімальний виклик
+        try:
+            result = DeepFace.analyze(
+                img_path=img_path,
+                actions=["emotion", "age", "gender", "race"]
+            )
+        except Exception as e:
+            print(f"[face_detector] DeepFace analyze failed (fallback): {e}")
+            return None
     except Exception as e:
-        # Лог у консолі Railway, але бот не падає
-        print(f"[face_detector] Error while analyzing face: {e}", flush=True)
+        print(f"[face_detector] Error while analyzing face: {e}")
         return None
+
+    # DeepFace іноді повертає список результатів
+    if isinstance(result, list):
+        result = result[0]
+
+    try:
+        age = int(result.get("age", 0))
+    except Exception:
+        age = 0
+
+    gender = str(result.get("gender", ""))
+
+    emotion = result.get("emotion", {}) or {}
+    dominant_emotion = str(result.get("dominant_emotion", ""))
+
+    race = result.get("race", {}) or {}
+    dominant_race = str(result.get("dominant_race", ""))
+
+    return {
+        "age": age,
+        "gender": gender,
+        "emotion": dict(emotion),
+        "dominant_emotion": dominant_emotion,
+        "race": dict(race),
+        "dominant_race": dominant_race,
+    }
