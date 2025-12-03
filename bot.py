@@ -5,17 +5,15 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 
 # ======================================================
-#              FIX PYTHON PATH (Railway FIX)
+#              FIX PYTHON PATH (Railway)
 # ======================================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ANALYZER_DIR = os.path.join(BASE_DIR, "analyzer")
 
-# додаємо кореневу папку проекту
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-# додаємо папку analyzer
 if ANALYZER_DIR not in sys.path:
     sys.path.insert(0, ANALYZER_DIR)
 
@@ -36,6 +34,8 @@ from analyzer.stress_model import detect_microstress
 from analyzer.personality_model import build_personality_profile
 from analyzer.professional_profile import build_professional_profile
 from analyzer.report_builder import build_full_report
+from analyzer.physiognomy_model import build_physiognomy_profile   # 🔹 нове
+from analyzer.radicals import RADICALS                             # 🔹 нове
 
 from database import init_db, save_report, get_user_reports
 
@@ -61,11 +61,15 @@ init_db()
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer(
-        "👋 Надішли фото — я створю психологічний портрет.\n\n"
-        "🧠 Функції:\n"
-        "• Збереження історії\n"
-        "• /compare — порівняння стану\n"
-        "• /summary <user_id> — HR-звіт"
+        "👋 Надішли фото — я створю розширений психологічний портрет.\n\n"
+        "🧠 В основі:\n"
+        "• емоційний аналіз\n"
+        "• мікрострес\n"
+        "• Big Five + радикали (Пономаренко)\n"
+        "• фізіогномічний профіль (форма обличчя, риси, пропорції)\n\n"
+        "Команди:\n"
+        "• /compare — порівняння останніх двох станів\n"
+        "• /summary <user_id> — HR-звіт за останнім аналізом"
     )
 
 
@@ -74,7 +78,7 @@ async def start(message: types.Message):
 # ======================================================
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
-    await message.answer("⏳ Аналізую фото…")
+    await message.answer("⏳ Аналізую фото… це може зайняти кілька секунд.")
 
     user_id = message.from_user.id
     file_id = message.photo[-1].file_id
@@ -86,29 +90,46 @@ async def handle_photo(message: types.Message):
 
     await bot.download_file(file.file_path, img_path)
 
-    # --- FACE ---
+    # --- 1. FACE (DeepFace / RetinaFace) ---
     face_info = detect_face_info(img_path)
     if face_info is None:
-        return await message.answer("⚠️ Не вдалося розпізнати обличчя.")
+        return await message.answer("⚠️ Не вдалося розпізнати обличчя. Спробуй інше фото (прямий ракурс, хороше світло).")
 
-    # --- EMOTION ---
+    # --- 2. EMOTION ---
     emotion_data = interpret_emotions(face_info["emotion"])
 
-    # --- STRESS ---
+    # --- 3. STRESS (мікроміміка / напруга) ---
     stress_data = detect_microstress(img_path)
 
-    # --- PERSONALITY ---
+    # --- 4. PERSONALITY (Big Five + радикал Пономаренка) ---
     personality = build_personality_profile(face_info, emotion_data, stress_data)
 
-    # --- PROFESSIONAL PROFILE ---
+    # --- 5. PHYSIOGNOMY (НАУКОВИЙ ПІДХІД ДО РИС ОБЛИЧЧЯ) ---
+    # очікується, що build_physiognomy_profile повертає щось типу:
+    # {
+    #   "face_shape": "...",
+    #   "dominant_features": [...],
+    #   "physiog_profile_text": "довгий опис...",
+    #   "scientific_notes": "що є евристикою, а що — обережні висновки"
+    # }
+    physiognomy = build_physiognomy_profile(face_info)
+
+    # --- 6. PROFESSIONAL PROFILE ---
     professional = build_professional_profile(personality)
 
-    # --- REPORT ---
+    # --- 7. FULL REPORT (всередині підшивається радикал + фізіогноміка) ---
+    # ВАЖЛИВО: у report_builder.build_full_report має бути оновлена сигнатура:
+    # def build_full_report(face_info, emotion_data, stress_data, personality, professional, physiognomy):
     full_report = build_full_report(
-        face_info, emotion_data, stress_data, personality, professional
+        face_info,
+        emotion_data,
+        stress_data,
+        personality,
+        professional,
+        physiognomy
     )
 
-    # --- SAVE TO DB ---
+    # --- 8. SAVE TO DB ---
     save_report(
         user_id,
         img_path,
@@ -120,12 +141,30 @@ async def handle_photo(message: types.Message):
         full_report
     )
 
-    # --- SEND CHUNKS ---
+    # --- 9. SEND CHUNKS ---
     chunk = 3500
     for i in range(0, len(full_report), chunk):
         await message.answer(full_report[i:i + chunk])
 
-    await message.answer("💾 Звіт збережено. /compare — порівняти зміни.")
+    # Коротке резюме по радикалу + фізіогноміці
+    radical_code = personality.get("radical_code") or personality.get("radical_key")
+    radical_info = RADICALS.get(radical_code) if radical_code else None
+
+    short_block = ""
+
+    if radical_info:
+        short_block += f"🧩 Радикал: *{radical_info['name']}*\n" \
+                       f"Коротко: {radical_info['short']}\n\n"
+
+    if physiognomy and isinstance(physiognomy, dict):
+        phys_short = physiognomy.get("short_summary") or physiognomy.get("physiog_profile_text", "")[:400]
+        if phys_short:
+            short_block += f"👁 Фізіогномічний профіль (коротко):\n{phys_short}\n\n"
+
+    if short_block:
+        await message.answer(short_block, parse_mode="Markdown")
+
+    await message.answer("💾 Звіт збережено. Використай /compare, щоб відстежити динаміку.")
 
 
 # ======================================================
@@ -136,7 +175,7 @@ async def compare(message: types.Message):
     reports = get_user_reports(message.from_user.id)
 
     if len(reports) < 2:
-        return await message.answer("Потрібні мінімум 2 фото.")
+        return await message.answer("Потрібні мінімум 2 фото для порівняння стану.")
 
     import json
 
@@ -163,15 +202,15 @@ async def compare(message: types.Message):
 • Стрес: {stress2['microstress_level']}
 
 🔥 Динаміка:
-• Емоційність: {'покращилась' if emo1['valence'] > emo2['valence'] else 'погіршилась'}
-• Стрес: {'зріс' if stress1['microstress_level'] > stress2['microstress_level'] else 'знизився'}
+• Емоційність: {'покращилась' if emo1['valence'] > emo2['valence'] else 'погіршилась або стабільна'}
+• Стрес: {'зріс' if stress1['microstress_level'] > stress2['microstress_level'] else 'знизився або стабільний'}
 """
 
     await message.answer(result)
 
 
 # ======================================================
-#                     ADMIN SUMMARY
+#           ADMIN SUMMARY (з радикалом + описом)
 # ======================================================
 @dp.message(Command("summary"))
 async def admin_summary(message: types.Message):
@@ -192,11 +231,24 @@ async def admin_summary(message: types.Message):
     personality = json.loads(reports[0][6])
     professional = json.loads(reports[0][7])
 
+    radical_code = personality.get("radical_code") or personality.get("radical_key")
+    radical_info = RADICALS.get(radical_code) if radical_code else None
+
+    radical_block = ""
+    if radical_info:
+        radical_block = (
+            f"\nПровідний радикал:\n"
+            f"• {radical_info['name']}\n"
+            f"• Коротко: {radical_info['short']}\n\n"
+            f"Детальний опис:\n{radical_info['description']}\n"
+        )
+    else:
+        radical_block = f"\nПсихотип (текст):\n• {personality.get('radical', '—')}\n"
+
     summary = f"""
 👤 **HR Summary для {target}**
 
-Психотип:
-• {personality['radical']}
+{radical_block}
 
 Big Five:
 • Openness: {personality['big_five_scores']['openness']}
@@ -205,7 +257,7 @@ Big Five:
 • Agreeableness: {personality['big_five_scores']['agreeableness']}
 • Neuroticism: {personality['big_five_scores']['neuroticism']}
 
-Рекомендації:
+Рекомендовані ролі:
 • {professional['recommended_roles'][0]}
 """
 
