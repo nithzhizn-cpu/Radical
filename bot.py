@@ -12,8 +12,8 @@ from analyzer.report_builder import build_full_report
 
 from database import init_db, save_report, get_user_reports
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
-ADMIN_IDS = [123456789]  # сюди встав свій Telegram ID
+BOT_TOKEN = os.getenv("8545319800:AAFUvgsv3mB30FSdKR4BqAzYfjW_7GxbEr8", "YOUR_TELEGRAM_BOT_TOKEN")
+ADMIN_IDS = [270799202]  # сюди встав свій Telegram ID
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
