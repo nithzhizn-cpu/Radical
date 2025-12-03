@@ -2,7 +2,8 @@
 
 from typing import Dict, Any, Optional
 from .radicals import RADICALS
-from .ml_radical_classifier import predict_radical   # ← МАШИННЕ НАВЧАННЯ
+from .ml_radical_classifier import predict_radical          # ← МАШИННЕ НАВЧАННЯ
+from .xai_explainer import explain_radical_choice          # ← XAI ПОЯСНЕННЯ
 
 
 # -----------------------------------------------------------
@@ -111,14 +112,14 @@ def _adjust_big_five_with_physio(big_five: Dict[str, int],
     elif sym < 0.8:
         N += 5
 
-    # Щелепа → воля
+    # Щелепа
     if jaw > 0.6:
         C += 8
         E += 5
     else:
         A += 3
 
-    # Брови → емпатія
+    # Брови
     if brow > 0.45:
         O += 5
         A += 5
@@ -126,7 +127,7 @@ def _adjust_big_five_with_physio(big_five: Dict[str, int],
     else:
         C += 3
 
-    # Очі → контроль
+    # Очі
     if eyes < 0.25:
         N -= 5
         C += 5
@@ -164,9 +165,7 @@ def build_personality_profile(
     # 3) корекція по фізіогноміці
     big_five = _adjust_big_five_with_physio(big_five, physio)
 
-    # ---------------------------------------------------
-    # 4) МАШИННЕ НАВЧАННЯ ВИБИРАЄ РАДИКАЛ ПРИ ТОЧНОСТІ 85–92%
-    # ---------------------------------------------------
+    # Збір ознак для ML-моделі
     features = {
         "openness": big_five["openness"],
         "conscientiousness": big_five["conscientiousness"],
@@ -180,12 +179,21 @@ def build_personality_profile(
         "eyes": (physio or {}).get("eyes", 0.5),
         "valence": emotion_data.get("valence", 0.0),
         "stress": stress_data.get("microstress_level", 0.0),
+        "dominant_emotion": emotion_data.get("dominant_emotion", ""),
     }
 
+    # ---------------------------------------------------
+    # 4) МАШИННЕ НАВЧАННЯ ВИБИРАЄ РАДИКАЛ
+    # ---------------------------------------------------
     radical_key = predict_radical(features)
-
     radical_info = RADICALS.get(radical_key, RADICALS["mixed"])
 
+    # ---------------------------------------------------
+    # 5) XAI — пояснення вибору радикала
+    # ---------------------------------------------------
+    explanation = explain_radical_choice(radical_key, features)
+
+    # Нотатки
     notes = []
     if physio:
         notes.append("Фізіогномічні ознаки враховані при формуванні профілю.")
@@ -198,6 +206,7 @@ def build_personality_profile(
         "radical": radical_info["name"],
         "radical_short": radical_info["short"],
         "radical_description": radical_info["description"],
+        "explanation": explanation,             # ← 🔥 ДОДАНО
         "physio_used": bool(physio),
         "notes": notes,
     }
