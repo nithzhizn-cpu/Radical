@@ -108,7 +108,7 @@ async def handle_photo(message: types.Message):
     stress_data = detect_microstress(img_path)
 
     # --- 4. PERSONALITY (Big Five + радикал Пономаренка) ---
-    personality = build_personality_profile(face_info, emotion_data, stress_data)
+    personality = build_personality_profile(face_info, emotion_data, stress_data, physiognomy)
 
     # --- 5. PHYSIOGNOMY ---
     physiognomy = build_physiognomy_profile(face_info)
