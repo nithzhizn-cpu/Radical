@@ -1,78 +1,84 @@
-import math
-
-POSITIVE_EMOS = {"happy", "surprise"}
-NEGATIVE_EMOS = {"sad", "fear", "angry", "disgust"}
-NEUTRAL_EMOS = {"neutral"}
+from typing import Dict
 
 
-def interpret_emotions(emotions: dict):
+# Валентність емоцій від -1 до +1
+VALENCE_MAP = {
+    "angry": -0.9,
+    "fear": -0.8,
+    "sad": -0.8,
+    "disgust": -0.7,
+    "surprise": 0.1,   # нейтрально-позитивна/тривожна
+    "neutral": 0.0,
+    "happy": 0.9,
+}
+
+
+def interpret_emotions(emotions: Dict[str, float]):
     """
-    Аналізує розподіл емоцій:
-    - домінантна емоція
-    - валентність (позитив/негатив/нейтраль)
-    - інтенсивність, стабільність, тенденції
+    Приймає raw-емоції з DeepFace, наприклад:
+    {"angry": 5.1, "happy": 70.2, ...}
+
+    Повертає структурований профіль:
+    {
+      "dominant_emotion": str,
+      "valence": float (0..100),
+      "intensity": float (0..100),
+      "emotional_style": str,
+      "raw": {...}
+    }
     """
     if not emotions:
         return {
             "dominant_emotion": "unknown",
-            "valence": "невизначена",
-            "emotional_intensity": "невідомо",
-            "emotional_stability": "невідомо",
-            "tendencies": [],
+            "valence": 50.0,
+            "intensity": 0.0,
+            "emotional_style": "Емоційний стан не визначений.",
+            "raw": {},
         }
 
-    # нормалізація в 0–1
-    total = sum(emotions.values())
-    norm = {k: (v / total * 100.0) for k, v in emotions.items()} if total > 0 else emotions
+    # Нормалізація
+    total = sum(emotions.values()) or 1.0
+    normalized = {k.lower(): (v / total) for k, v in emotions.items()}
 
-    dominant = max(norm, key=norm.get)
-    dom_val = norm[dominant]
+    # Домінантна емоція
+    dominant_emotion = max(normalized, key=normalized.get)
+    dom_value = normalized[dominant_emotion]
 
-    # валентність
-    if dominant in POSITIVE_EMOS:
-        valence = "переважно позитивна"
-    elif dominant in NEGATIVE_EMOS:
-        valence = "переважно негативна"
-    elif dominant in NEUTRAL_EMOS:
-        valence = "стримана / нейтральна"
+    # Обчислення валентності (зважена сума)
+    val_raw = 0.0
+    for emo, frac in normalized.items():
+        base = VALENCE_MAP.get(emo, 0.0)
+        val_raw += base * frac
+
+    # Переводимо валентність у шкалу 0..100
+    # -1 -> 0, 0 -> 50, +1 -> 100
+    valence_0_100 = (val_raw + 1.0) * 50.0
+    valence_0_100 = max(0.0, min(100.0, valence_0_100))
+
+    # Інтенсивність (наскільки домінує одна емоція)
+    intensity = dom_value * 100.0
+
+    # Текстовий стиль
+    if valence_0_100 > 70:
+        mood = "переважно позитивний емоційний фон"
+    elif valence_0_100 < 30:
+        mood = "переважно негативний або напружений емоційний фон"
     else:
-        valence = "змішана"
+        mood = "змішаний або відносно нейтральний фон"
 
-    # інтенсивність
-    if dom_val > 70:
-        emotional_intensity = "висока"
-    elif dom_val > 40:
-        emotional_intensity = "помірна"
+    if intensity > 70:
+        style = "Домінує одна яскраво виражена емоція; реакції можуть бути помітними для оточення."
+    elif intensity < 35:
+        style = "Емоційний стан більш розмитий, без різко вираженої емоції."
     else:
-        emotional_intensity = "низька"
+        style = "Є одна провідна емоція, але простежуються й інші емоційні відтінки."
 
-    # простий показник стабільності — чим більш рівномірний розподіл, тим менш стабільний стан
-    probs = [v / total for v in emotions.values()] if total > 0 else []
-    entropy = -sum(p * math.log(p + 1e-9) for p in probs) if probs else 0.0
-    # грубе правило: низька ентропія = стабільний профіль
-    if entropy < 1.2:
-        stability = "відносно стабільний"
-    elif entropy < 1.8:
-        stability = "змінний"
-    else:
-        stability = "дуже варіативний"
-
-    tendencies = []
-
-    if valence == "переважно позитивна":
-        tendencies.append("Схильність бачити ситуації у більш позитивному світлі.")
-    if valence == "переважно негативна":
-        tendencies.append("Є тенденція фокусуватися на ризиках, проблемах та загрозах.")
-    if "neutral" in norm and norm["neutral"] > 40:
-        tendencies.append("Схильність до емоційного контролю та стриманості.")
-    if emotional_intensity == "висока":
-        tendencies.append("Емоційні реакції можуть бути яскравими та помітними для оточення.")
+    emotional_style = f"{mood}. {style}"
 
     return {
-        "dominant_emotion": dominant,
-        "valence": valence,
-        "emotional_intensity": emotional_intensity,
-        "emotional_stability": stability,
-        "tendencies": tendencies,
-        "normalized_emotions": norm,
+        "dominant_emotion": dominant_emotion,
+        "valence": round(valence_0_100, 1),
+        "intensity": round(intensity, 1),
+        "emotional_style": emotional_style,
+        "raw": emotions,
     }
