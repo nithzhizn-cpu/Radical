@@ -13,7 +13,7 @@ from analyzer.report_builder import build_full_report
 from database import init_db, save_report, get_user_reports
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
-ADMIN_IDS = [123456789]  # сюди свій Telegram ID
+ADMIN_IDS = [123456789]  # сюди встав свій Telegram ID
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -21,17 +21,23 @@ dp = Dispatcher()
 init_db()
 
 
+# ================================
+#           START
+# ================================
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer(
-        "👋 Надішли фото обличчя — я сформую розширений психологічний портрет.\n"
-        "➕ Доступні функції:\n"
-        "- збереження історії аналізів\n"
-        "- порівняння фото: /compare\n"
-        "- адмін-звіт: /summary <user_id>"
+        "👋 Надішли фото обличчя — я сформую **розширений психологічний портрет**.\n\n"
+        "📌 Доступні функції:\n"
+        "• збереження історії аналізів\n"
+        "• порівняння стану за фото: /compare\n"
+        "• адмін-звіт HR: /summary <user_id>"
     )
 
 
+# ================================
+#         ОБРОБКА ФОТО
+# ================================
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
     await message.answer("⏳ Аналізую фото…")
@@ -39,16 +45,15 @@ async def handle_photo(message: types.Message):
     user_id = message.from_user.id
     file_id = message.photo[-1].file_id
     file = await bot.get_file(file_id)
-    img_path = f"photos/{user_id}_{file_id}.jpg"
 
     os.makedirs("photos", exist_ok=True)
+    img_path = f"photos/{user_id}_{file_id}.jpg"
     await bot.download_file(file.file_path, img_path)
 
-    # 1. Лице
+    # 1. Аналіз обличчя
     face_info = detect_face_info(img_path)
     if face_info is None:
-        await message.answer("⚠️ Не вдалося розпізнати обличчя.")
-        return
+        return await message.answer("⚠️ Не вдалося розпізнати обличчя.")
 
     # 2. Емоції
     emotion_data = interpret_emotions(face_info["emotion"])
@@ -56,13 +61,13 @@ async def handle_photo(message: types.Message):
     # 3. Стрес
     stress_data = detect_microstress(img_path)
 
-    # 4. Особистість
+    # 4. Особистість (Big Five + Радикал + Опис радикала)
     personality = build_personality_profile(face_info, emotion_data, stress_data)
 
-    # 5. Професійний профіль
+    # 5. Професійні рекомендації
     professional = build_professional_profile(personality)
 
-    # 6. Звіт
+    # 6. Повний текстовий психологічний портрет
     full_report = build_full_report(
         face_info, emotion_data, stress_data,
         personality, professional
@@ -76,16 +81,16 @@ async def handle_photo(message: types.Message):
         full_report
     )
 
-    # 8. Відправляємо
+    # 8. Відправляємо текст по частинах (Telegram ліміт)
     chunk = 3500
     for i in range(0, len(full_report), chunk):
         await message.answer(full_report[i:i+chunk])
 
-    await message.answer("💾 Звіт збережено в твою історію.\nПерегляд і порівняння: /compare")
+    await message.answer("💾 Звіт додано в історію.\nПерегляд та порівняння: /compare")
 
 
 # ================================
-#    ПОРІВНЯННЯ ДЕКІЛЬКОХ ФОТО
+#        ПОРІВНЯННЯ ФОТО
 # ================================
 @dp.message(Command("compare"))
 async def compare(message: types.Message):
@@ -93,8 +98,7 @@ async def compare(message: types.Message):
     reports = get_user_reports(user_id)
 
     if len(reports) < 2:
-        await message.answer("Потрібно мінімум 2 фото для порівняння.")
-        return
+        return await message.answer("Потрібно мінімум 2 фото для порівняння.")
 
     latest = reports[0]
     previous = reports[1]
@@ -125,21 +129,21 @@ async def compare(message: types.Message):
 
 ### 🔄 Динаміка змін:
 
-🧠 **Емоційний стан:**
-- {'Став більш позитивним' if emo1['valence'] > emo2['valence'] else 'Став менш позитивним'}
+🧠 **Емоційність:**  
+- {'Стан став більш позитивним' if emo1['valence'] > emo2['valence'] else 'Стан став менш позитивним'}
 
-💥 **Стрес:**
-- {'Зріс' if stress1['microstress_level'] > stress2['microstress_level'] else 'Знизився або стабілізувався'}
+💥 **Стрес:**  
+- {'Рівень стресу зріс' if stress1['microstress_level'] > stress2['microstress_level'] else 'Стрес знизився або стабілізувався'}
 
-🙂 **Домінантна емоція змінилась з** *{emo2['dominant_emotion']}* **на** *{emo1['dominant_emotion']}*
-
+🙂 **Домінантна емоція змінилась:**  
+з *{emo2['dominant_emotion']}* → *{emo1['dominant_emotion']}*
 """
 
     await message.answer(comparison)
 
 
 # ================================
-#           АДМІН-МОД
+#              АДМІН
 # ================================
 @dp.message(Command("summary"))
 async def admin_summary(message: types.Message):
@@ -154,20 +158,17 @@ async def admin_summary(message: types.Message):
     reports = get_user_reports(target_user)
 
     if not reports:
-        return await message.answer("У користувача немає даних.")
+        return await message.answer("У користувача немає збережених аналізів.")
 
     import json
     last = reports[0]
     personality = json.loads(last[6])
     professional = json.loads(last[7])
 
-    # короткий HR-summary
     summary = f"""
 👤 **HR Summary для користувача {target_user}**
 
-—
-
-### Психотип (радикал)
+### Психотип (радикал):
 - {personality['radical']}
 
 ### Ключові риси Big Five:
@@ -180,18 +181,19 @@ async def admin_summary(message: types.Message):
 ### Рекомендовані ролі:
 - {professional['recommended_roles'][0]}
 
-### Ризики:
+### Основні ризики:
 - {professional['risks'][0]}
 
 ### Рекомендований стиль взаємодії:
 - {professional['communication_style'][0]}
-
 """
 
     await message.answer(summary)
 
 
-# RUN
+# ================================
+#              RUN
+# ================================
 async def main():
     await dp.start_polling(bot)
 
