@@ -1,132 +1,169 @@
-import cv2
-import numpy as np
-import mediapipe as mp
+# analyzer/physiognomy_model.py
 
-mp_face = mp.solutions.face_mesh
+"""
+ФІЗІОГНОМІЧНИЙ МОДЕЛЬНИЙ МОДУЛЬ
 
+ВАЖЛИВО:
+- Це НЕ справжня професійна фізіогноміка.
+- Тут немає реального аналізу по точках обличчя (landmarks).
+- Всі висновки – евристичні і базуються на віці, емоціях та загальних
+  наукових уявленнях про невербальну поведінку.
+- Заборонено використовувати це як інструмент для дискримінації чи
+  «оцінки характеру» тільки по зовнішності.
+"""
 
-def compute_fWHR(landmarks):
-    # ширина обличчя (від вилиці до вилиці)
-    left = landmarks[234]
-    right = landmarks[454]
-    width = np.linalg.norm(np.array([left.x, left.y]) - np.array([right.x, right.y]))
-
-    # висота (від брів до середини губ)
-    top = landmarks[10]
-    bottom = landmarks[152]
-    height = np.linalg.norm(np.array([top.x, top.y]) - np.array([bottom.x, bottom.y]))
-
-    if height == 0:
-        return 1.75
-
-    return width / height
+from typing import Dict, Any
 
 
-def compute_symmetry(landmarks):
-    left_indices = list(range(0, 200))
-    right_indices = list(range(200, 400))
+def build_physiognomy_profile(face_info: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Приймає face_info з face_detector.detect_face_info і повертає
+    словник з описом фізіогномічного профілю.
 
-    left_side = np.array([[landmarks[i].x, landmarks[i].y] for i in left_indices])
-    right_side = np.array([[landmarks[i].x, landmarks[i].y] for i in right_indices])
+    Очікувана структура face_info:
+    {
+        "age": int,
+        "gender": str,
+        "emotion": {...},
+        "dominant_emotion": str,
+        "race": {...},
+        "dominant_race": str,
+    }
+    """
 
-    if len(left_side) != len(right_side):
-        return 0.85
+    age = face_info.get("age", 0) or 0
+    gender_raw = str(face_info.get("gender", "")).lower()
+    dominant_emotion = str(face_info.get("dominant_emotion", "")).lower()
 
-    diff = np.abs(left_side - right_side)
-    symmetry = 1 - np.mean(diff)
+    # -------------------------------------------------
+    # 1. Умовна "вікова морфологія" (дуже загальні речі)
+    # -------------------------------------------------
+    if age < 20:
+        age_desc = (
+            "Мʼякі, ще не до кінця сформовані риси. Зазвичай у цьому віці "
+            "міміка більш активна, а вирази обличчя мінливі."
+        )
+        maturity = "юнацький / ранній вік"
+    elif 20 <= age <= 35:
+        age_desc = (
+            "Риси обличчя вже сформовані, є баланс між мʼякістю та чіткістю. "
+            "У цьому віці вирази часто поєднують емоційність та контроль."
+        )
+        maturity = "молодий дорослий"
+    elif 36 <= age <= 55:
+        age_desc = (
+            "Помітні ознаки вікової міміки, можливі дрібні зморшки в ділянці очей та лоба. "
+            "Вираз обличчя часто більш стабільний, з відтінком досвіду."
+        )
+        maturity = "зрілий вік"
+    else:
+        age_desc = (
+            "Риси обличчя відображають накопичений життєвий досвід. "
+            "Міміка може бути більш економною, але виразною за рахунок дрібних деталей."
+        )
+        maturity = "пізній дорослий / старший вік"
 
-    return float(max(0.5, min(1.0, symmetry)))
+    # -------------------------------------------------
+    # 2. Гендерно-морфологічні нотатки (дуже обережно)
+    # -------------------------------------------------
+    if "female" in gender_raw or "woman" in gender_raw:
+        gender_desc = (
+            "Обличчя сприймається з більш мʼякими, округлими рисами, "
+            "що типово для жіночого морфотипу, однак конкретна міміка "
+            "та емоції мають значно більший вплив на враження, ніж стать."
+        )
+    elif "male" in gender_raw or "man" in gender_raw:
+        gender_desc = (
+            "Риси обличчя можуть виглядати більш різкими або структурованими, "
+            "що часто повʼязують із чоловічим морфотипом. Водночас саме вираз "
+            "очей, напруга мʼязів та емоційний фон формують основний ефект."
+        )
+    else:
+        gender_desc = (
+            "Модель не дала чіткого прогнозу щодо статі, тому інтерпретація "
+            "спирається радше на емоційний фон та загальну міміку, а не на "
+            "гендерні особливості."
+        )
 
+    # -------------------------------------------------
+    # 3. Емоційно-мімічний блок (як це виглядає «зовні»)
+    # -------------------------------------------------
+    if dominant_emotion in ("angry", "fear", "sad"):
+        mimic_desc = (
+            "Міміка демонструє напругу: можливе стискання щелеп, "
+            "звуження очей, підкреслена робота мʼязів лоба або брів. "
+            "Такі вирази часто сприймаються як сигнал настороженості, "
+            "захисту або внутрішньої боротьби."
+        )
+    elif dominant_emotion in ("happy", "surprise"):
+        mimic_desc = (
+            "Обличчя має більш відкритий, розкритий вираз: підняті кути губ, "
+            "більш відкрита очна щілина, загальна пластика мʼязів лиця "
+            "сприймається як доброзичлива або зацікавлена."
+        )
+    elif dominant_emotion in ("neutral", ""):
+        mimic_desc = (
+            "Міміка відносно спокійна, без явних крайніх емоцій. "
+            "Такий вираз дає змогу легше «прикривати» внутрішні переживання, "
+            "але одночасно може виглядати стримано або закрито."
+        )
+    else:
+        mimic_desc = (
+            "Міміка виглядає комбінованою, без явного домінування однієї емоції. "
+            "Це може свідчити про складний внутрішній стан або звичку "
+            "контролювати зовнішні прояви емоцій."
+        )
 
-def jaw_tension(landmarks):
-    # Відстань між кутами щелепи
-    left = landmarks[ jaw_left :=  jaw_left if (jaw_left:= jaw_left) else  jaw_left ]
-    # fallback if logic fails (python fix)
-    left = landmarks[234]
-    right = landmarks[454]
-    dist = np.linalg.norm(np.array([left.x, left.y]) - np.array([right.x, right.y]))
+    # -------------------------------------------------
+    # 4. Умовний блок про форму / структуру (без реального виміру)
+    # -------------------------------------------------
+    # Оскільки у нас немає реальних лендмарків, ми чесно пишемо про обмеження.
+    face_shape = (
+        "Форма обличчя не вимірюється алгоритмічно в цій версії. "
+        "Опис базується на загальних закономірностях: риси, які "
+        "виглядають більш мʼякими та округлими, часто сприймаються як "
+        "більш «контактні», тоді як більш різкі та кутові — як "
+        "більш «жорсткі» або структуровані. Це субʼєктивне враження, "
+        "а не обʼєктивний вимір."
+    )
 
-    # умовний нормований показник
-    return float(min(1.0, max(0.0, dist * 2)))
+    # -------------------------------------------------
+    # 5. Наукові обмеження і застереження
+    # -------------------------------------------------
+    scientific_notes = (
+        "Науковий підхід у цій моделі базується насамперед на даних "
+        "про емоційний стан, вікові особливості та базові знання про "
+        "невербальну поведінку. Класична фізіогноміка (спроби виводити "
+        "характер тільки з рис обличчя) не має достатньої наукової "
+        "підтримки і часто критикується за упередженість.\n\n"
+        "Тому всі наведені інтерпретації потрібно сприймати як "
+        "описові гіпотези, а не як діагноз. Ключову роль у розумінні "
+        "людини завжди відіграє контекст: поведінка, історія життя, "
+        "цінності, рішення та дії, а не лише зовнішність."
+    )
 
+    # -------------------------------------------------
+    # 6. Коротке резюме (для швидкого блоку в боті)
+    # -------------------------------------------------
+    short_summary = (
+        f"Вік (умовно): {age} років, морфологічно — {maturity}. "
+        f"Міміка демонструє емоційний фон, близький до «{dominant_emotion or 'невизначеного'}». "
+        "Опис рис обличчя є попереднім і не претендує на точну фізіогномічну діагностику."
+    )
 
-def brow_height(landmarks):
-    brow_top = landmarks[105]
-    eye_center = landmarks[468]
+    # Домінантні «ознаки» — просто словесні маркери
+    dominant_features = [
+        f"Вікова морфологія: {maturity}",
+        "Міміка: " + mimic_desc[:120] + ("..." if len(mimic_desc) > 120 else ""),
+        "Загальне враження формується поєднанням емоцій та мʼязової напруги, а не статтю чи расою.",
+    ]
 
-    dist = np.linalg.norm(np.array([brow_top.x, brow_top.y]) - np.array([eye_center.x, eye_center.y]))
-    return float(min(1.0, max(0.0, dist * 5)))
-
-
-def eye_openness(landmarks):
-    top = landmarks[159]
-    bottom = landmarks[145]
-
-    openness = abs(top.y - bottom.y) * 20
-    return float(min(1.0, max(0.0, openness)))
-
-
-def analyze_physiognomy(image_path):
-    img = cv2.imread(image_path)
-    if img is None:
-        return None
-
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-    with mp_face.FaceMesh(static_image_mode=True, max_num_faces=1) as fm:
-        res = fm.process(img_rgb)
-
-        if not res.multi_face_landmarks:
-            return None
-
-        landmarks = res.multi_face_landmarks[0].landmark
-
-        fWHR_value = compute_fWHR(landmarks)
-        symmetry = compute_symmetry(landmarks)
-        jaw = jaw_tension(landmarks)
-        brow = brow_height(landmarks)
-        eyes = eye_openness(landmarks)
-
-        # Психологічна інтерпретація
-        interpretation = []
-
-        # fWHR
-        if fWHR_value > 1.9:
-            interpretation.append("висока домінантність, рішучість, лідерський тип")
-        elif fWHR_value > 1.7:
-            interpretation.append("помірна домінантність, збалансований темперамент")
-        else:
-            interpretation.append("мʼякість, чутливість, низька конфліктність")
-
-        # симетрія
-        if symmetry > 0.9:
-            interpretation.append("стабільний емоційний фон, хороша стресостійкість")
-        else:
-            interpretation.append("схильність до емоційних коливань")
-
-        # щелепа
-        if jaw > 0.6:
-            interpretation.append("сильний вольовий компонент, наполегливість")
-        else:
-            interpretation.append("гнучкість, дипломатичність")
-
-        # брови
-        if brow > 0.45:
-            interpretation.append("висока чутливість, емпатія, соціальна уважність")
-        else:
-            interpretation.append("прямолінійність, твердість, рішучість")
-
-        # очі
-        if eyes < 0.25:
-            interpretation.append("фокусованість, контроль, низька імпульсивність")
-        else:
-            interpretation.append("емоційність, відкритість")
-
-        return {
-            "fWHR": round(float(fWHR_value), 3),
-            "symmetry": round(float(symmetry), 3),
-            "jaw": round(float(jaw), 3),
-            "brow": round(float(brow), 3),
-            "eyes": round(float(eyes), 3),
-            "summary": interpretation
-        }
+    return {
+        "face_shape": face_shape,
+        "age_morphology": age_desc,
+        "gender_morphology": gender_desc,
+        "mimic_description": mimic_desc,
+        "dominant_features": dominant_features,
+        "short_summary": short_summary,
+        "scientific_notes": scientific_notes,
+    }
