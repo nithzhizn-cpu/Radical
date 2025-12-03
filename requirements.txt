@@ -6,3 +6,4 @@ scikit-learn
 reportlab
 python-dotenv
 deepface==0.0.96
+mediapipe==0.10.20
