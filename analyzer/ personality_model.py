@@ -1,7 +1,9 @@
 from typing import Dict
 from analyzer.radicals import RADICAL_DESCRIPTIONS
+
 NEGATIVE_EMOS = {"sad", "fear", "angry", "disgust"}
 POSITIVE_EMOS = {"happy", "surprise"}
+
 
 def estimate_radical(dominant_emotion: str, stress_level: str) -> str:
     """
@@ -118,8 +120,12 @@ def build_personality_profile(face_info, emotion_profile, stress_info):
         stress_info.get("microstress_level", "")
     )
 
+    # 🔥 Додаємо повний опис радикала
+    radical_description = RADICAL_DESCRIPTIONS.get(radical, "Опис відсутній.")
+
     return {
         "big_five_scores": scores,
         "big_five_descriptions": descriptions,
         "radical": radical,
+        "radical_description": radical_description
     }
