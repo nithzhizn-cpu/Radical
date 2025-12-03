@@ -1,36 +1,24 @@
-# ===========================
-#  BASE IMAGE
-# ===========================
 FROM python:3.11-slim
 
-# ===========================
-#  FIX OpenCV (libGL.so.1 error)
-# ===========================
+# Ставимо системні бібліотеки для OpenCV
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
-# ===========================
-#  Create work directory
-# ===========================
 WORKDIR /app
 
-# ===========================
-#  Install Python dependencies
-# ===========================
+# Спочатку залежності
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ===========================
-#  Copy bot files
-# ===========================
-COPY . /app/
+# Потім весь код
+COPY . /app
 
-# ===========================
-#  Run the bot
-# ===========================
+# Можна приглушити TF-логи, якщо хочеш
+ENV TF_CPP_MIN_LOG_LEVEL=2
+
+# BOT_TOKEN передаєш через Railway → Variables
+ENV BOT_TOKEN=""
+
 CMD ["python", "bot.py"]
