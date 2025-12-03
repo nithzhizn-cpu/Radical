@@ -1,11 +1,10 @@
 aiogram==3.4.1
-opencv-python
+opencv-python-headless
 numpy
 pillow
 scikit-learn
 reportlab
 python-dotenv
 deepface
-insightface
 onnxruntime
 tf-keras
