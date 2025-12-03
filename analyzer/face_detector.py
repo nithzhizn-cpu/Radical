@@ -1,122 +1,151 @@
 import cv2
-from typing import Optional, Dict, Any
-
+import numpy as np
 from deepface import DeepFace
-from insightface.app import FaceAnalysis
-
-# Глобальний інстанс моделі, щоб не вантажити її кожен раз
-_insight_app: Optional[FaceAnalysis] = None
+import mediapipe as mp
 
 
-def _get_insight_app() -> FaceAnalysis:
+mp_face_mesh = mp.solutions.face_mesh
+
+
+def _run_deepface(img_path: str):
     """
-    Ледача ініціалізація InsightFace (buffalo_l).
-    Працює на CPU через onnxruntime.
+    Обгортка над DeepFace.analyze:
+    повертає age / gender / emotion / race та домінанти.
     """
-    global _insight_app
-    if _insight_app is None:
-        app = FaceAnalysis(
-            name="buffalo_l",  # якісний пайплайн: детектор + age/gender + embedding
-            providers=["CPUExecutionProvider"],
-        )
-        # det_size можна зменшити, якщо будуть проблеми з ресурсами
-        app.prepare(ctx_id=0, det_size=(640, 640))
-        _insight_app = app
-    return _insight_app
-
-
-def _analyze_emotion(img_path: str) -> Dict[str, Any]:
-    """
-    Окремо рахуємо емоції через DeepFace,
-    але НЕ використовуємо його стать/вік.
-    """
-    emo_res = DeepFace.analyze(
+    result = DeepFace.analyze(
         img_path=img_path,
-        actions=["emotion"],
-        enforce_detection=True,
+        actions=["emotion", "age", "gender", "race"],
+        enforce_detection=True
     )
-    if isinstance(emo_res, list):
-        emo_res = emo_res[0]
-    emotion_raw = emo_res.get("emotion", {}) or {}
-    dominant_emo = emo_res.get("dominant_emotion", "") or ""
 
-    # нормалізуємо ключі до lower-case
-    emotion_norm = {k.lower(): float(v) for k, v in emotion_raw.items()}
+    # DeepFace може повертати список
+    if isinstance(result, list):
+        result = result[0]
+
+    age = int(result.get("age", 0))
+    gender = str(result.get("gender", "") or "")
+    emotion = dict(result.get("emotion", {}))
+    dominant_emotion = str(result.get("dominant_emotion", "") or "")
+    race = dict(result.get("race", {}))
+    dominant_race = str(result.get("dominant_race", "") or "")
 
     return {
-        "emotion": emotion_norm,
-        "dominant_emotion": dominant_emo.lower(),
+        "age": age,
+        "gender": gender,
+        "emotion": emotion,
+        "dominant_emotion": dominant_emotion,
+        "race": race,
+        "dominant_race": dominant_race,
     }
 
 
-def detect_face_info(img_path: str) -> Optional[Dict[str, Any]]:
+def _run_facemesh(img_path: str):
     """
-    Детальний аналіз обличчя:
-    - age / gender через InsightFace (buffalo_l)
-    - emotion через DeepFace
-    - структура на виході сумісна з рештою бота
+    Запускає MediaPipe FaceMesh та повертає:
+    - список 468 лендмарок (x, y) у пікселях
+    - базові метрики якості (frontal_score, blur_score)
+    """
+    img = cv2.imread(img_path)
+    if img is None:
+        return None
+
+    h, w = img.shape[:2]
+
+    # оцінка різкості (чим вище, тим краще)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur_score = cv2.Laplacian(gray, cv2.CV_64F).var()
+
+    with mp_face_mesh.FaceMesh(
+        static_image_mode=True,
+        refine_landmarks=False,
+        max_num_faces=1,
+        min_detection_confidence=0.5,
+    ) as face_mesh:
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        res = face_mesh.process(img_rgb)
+
+    if not res.multi_face_landmarks:
+        return None
+
+    lm = res.multi_face_landmarks[0].landmark
+    landmarks = []
+    for p in lm:
+        landmarks.append((p.x * w, p.y * h))
+
+    # простенька евристика “наскільки лице фронтальне”
+    # беремо відстані між лівим/правим оком та центром обличчя
+    # і дивимось, наскільки вони симетричні
+    def dist(a, b):
+        return np.linalg.norm(np.array(a) - np.array(b))
+
+    # індекси з face mesh (приблизно)
+    # 33 – зовнішній кут правого ока, 263 – зовнішній кут лівого
+    # 1 – “центр” обличчя
+    try:
+        center = landmarks[1]
+        right_eye = landmarks[33]
+        left_eye = landmarks[263]
+
+        d_r = dist(center, right_eye)
+        d_l = dist(center, left_eye)
+        if d_r + d_l == 0:
+            frontal_score = 0.0
+        else:
+            frontal_score = 1.0 - abs(d_r - d_l) / (d_r + d_l)
+            frontal_score = float(max(0.0, min(1.0, frontal_score)))
+    except Exception:
+        frontal_score = 0.0
+
+    return {
+        "landmarks": landmarks,
+        "blur_score": float(blur_score),
+        "frontal_score": float(frontal_score),
+        "image_size": (w, h),
+    }
+
+
+def detect_face_info(img_path: str):
+    """
+    Головна функція, яку викликає бот.
+
+    Повертає словник:
+    {
+        "age": int,
+        "gender": str,
+        "emotion": {...},
+        "dominant_emotion": str,
+        "race": {...},
+        "dominant_race": str,
+        "landmarks": [(x, y), ...] або None,
+        "blur_score": float,
+        "frontal_score": float,
+    }
+
+    Якщо не вдалося нічого — повертає None
     """
     try:
-        img = cv2.imread(img_path)
-        if img is None:
-            print(f"[face_detector] Cannot read image: {img_path}")
-            return None
-
-        app = _get_insight_app()
-        faces = app.get(img)
-
-        if not faces:
-            print("[face_detector] No faces detected")
-            return None
-
-        # Беремо найбільше обличчя
-        faces_sorted = sorted(
-            faces,
-            key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
-            reverse=True,
-        )
-        face = faces_sorted[0]
-
-        # ------- ВІК -------
-        age_raw = getattr(face, "age", None)
-        try:
-            age = int(age_raw) if age_raw is not None else 0
-        except Exception:
-            age = 0
-
-        # Невелика корекція віку (InsightFace іноді занижує)
-        if age > 0 and age < 30:
-            age += 5
-
-        # ------- СТАТЬ -------
-        # InsightFace: gender = 0 (female), 1 (male)
-        gender_raw = getattr(face, "gender", None)
-
-        if gender_raw == 1:
-            gender = "man"
-        elif gender_raw == 0:
-            gender = "woman"
-        else:
-            gender = "unknown"
-
-        # ------- ЕМОЦІЇ -------
-        emo_info = _analyze_emotion(img_path)
-        emotion_dict = emo_info["emotion"]
-        dominant_emo = emo_info["dominant_emotion"]
-
-        # Ми расу не використовуємо — повертаємо заглушки
-        race_dict: Dict[str, float] = {}
-        dominant_race = ""
-
-        return {
-            "age": age,
-            "gender": gender,          # "man"/"woman"/"unknown"
-            "emotion": emotion_dict,   # dict з імовірностями
-            "dominant_emotion": dominant_emo,
-            "race": race_dict,
-            "dominant_race": dominant_race,
-        }
-
-    except Exception as e:
-        print(f"[face_detector] ERROR: {e}")
+        deep = _run_deepface(img_path)
+    except Exception:
         return None
+
+    mesh = _run_facemesh(img_path)
+
+    if mesh is None:
+        # повертаємо хоча б DeepFace-частину
+        deep.update(
+            {
+                "landmarks": None,
+                "blur_score": 0.0,
+                "frontal_score": 0.0,
+            }
+        )
+        return deep
+
+    deep.update(
+        {
+            "landmarks": mesh["landmarks"],
+            "blur_score": mesh["blur_score"],
+            "frontal_score": mesh["frontal_score"],
+        }
+    )
+    return deep
