@@ -24,6 +24,7 @@ print("Analyzer exists:", os.path.exists(ANALYZER_DIR))
 print("Analyzer content:", os.listdir(ANALYZER_DIR) if os.path.exists(ANALYZER_DIR) else "NONE")
 print("==================")
 
+
 # ======================================================
 #                 IMPORT LOCAL MODULES
 # ======================================================
@@ -34,10 +35,11 @@ from analyzer.stress_model import detect_microstress
 from analyzer.personality_model import build_personality_profile
 from analyzer.professional_profile import build_professional_profile
 from analyzer.report_builder import build_full_report
-from analyzer.physiognomy_model import build_physiognomy_profile   # 🔹 нове
-from analyzer.radicals import RADICALS                             # 🔹 нове
+from analyzer.physiognomy_model import build_physiognomy_profile
+from analyzer.radicals import RADICALS
 
 from database import init_db, save_report, get_user_reports
+
 
 # ======================================================
 #                  BOT TOKEN
@@ -55,6 +57,7 @@ dp = Dispatcher()
 
 init_db()
 
+
 # ======================================================
 #                    START
 # ======================================================
@@ -66,7 +69,7 @@ async def start(message: types.Message):
         "• емоційний аналіз\n"
         "• мікрострес\n"
         "• Big Five + радикали (Пономаренко)\n"
-        "• фізіогномічний профіль (форма обличчя, риси, пропорції)\n\n"
+        "• фізіогномічний профіль (риси, міміка, вікові особливості)\n\n"
         "Команди:\n"
         "• /compare — порівняння останніх двох станів\n"
         "• /summary <user_id> — HR-звіт за останнім аналізом"
@@ -93,10 +96,13 @@ async def handle_photo(message: types.Message):
     # --- 1. FACE (DeepFace / RetinaFace) ---
     face_info = detect_face_info(img_path)
     if face_info is None:
-        return await message.answer("⚠️ Не вдалося розпізнати обличчя. Спробуй інше фото (прямий ракурс, хороше світло).")
+        return await message.answer(
+            "⚠️ Не вдалося розпізнати обличчя.\n"
+            "Спробуй інше фото: анфас, без сильних тіней, з хорошим освітленням."
+        )
 
     # --- 2. EMOTION ---
-    emotion_data = interpret_emotions(face_info["emotion"])
+    emotion_data = interpret_emotions(face_info.get("emotion", {}))
 
     # --- 3. STRESS (мікроміміка / напруга) ---
     stress_data = detect_microstress(img_path)
@@ -104,29 +110,20 @@ async def handle_photo(message: types.Message):
     # --- 4. PERSONALITY (Big Five + радикал Пономаренка) ---
     personality = build_personality_profile(face_info, emotion_data, stress_data)
 
-    # --- 5. PHYSIOGNOMY (НАУКОВИЙ ПІДХІД ДО РИС ОБЛИЧЧЯ) ---
-    # очікується, що build_physiognomy_profile повертає щось типу:
-    # {
-    #   "face_shape": "...",
-    #   "dominant_features": [...],
-    #   "physiog_profile_text": "довгий опис...",
-    #   "scientific_notes": "що є евристикою, а що — обережні висновки"
-    # }
+    # --- 5. PHYSIOGNOMY ---
     physiognomy = build_physiognomy_profile(face_info)
 
     # --- 6. PROFESSIONAL PROFILE ---
     professional = build_professional_profile(personality)
 
-    # --- 7. FULL REPORT (всередині підшивається радикал + фізіогноміка) ---
-    # ВАЖЛИВО: у report_builder.build_full_report має бути оновлена сигнатура:
-    # def build_full_report(face_info, emotion_data, stress_data, personality, professional, physiognomy):
+    # --- 7. FULL REPORT ---
     full_report = build_full_report(
         face_info,
         emotion_data,
         stress_data,
         personality,
         professional,
-        physiognomy
+        physiognomy,
     )
 
     # --- 8. SAVE TO DB ---
@@ -138,7 +135,7 @@ async def handle_photo(message: types.Message):
         stress_data,
         personality,
         professional,
-        full_report
+        full_report,
     )
 
     # --- 9. SEND CHUNKS ---
@@ -153,13 +150,19 @@ async def handle_photo(message: types.Message):
     short_block = ""
 
     if radical_info:
-        short_block += f"🧩 Радикал: *{radical_info['name']}*\n" \
-                       f"Коротко: {radical_info['short']}\n\n"
+        short_block += (
+            f"🧩 Радикал: *{radical_info['name']}*\n"
+            f"Коротко: {radical_info['short']}\n\n"
+        )
 
-    if physiognomy and isinstance(physiognomy, dict):
-        phys_short = physiognomy.get("short_summary") or physiognomy.get("physiog_profile_text", "")[:400]
+    if isinstance(physiognomy, dict):
+        phys_short = physiognomy.get("short_summary") or \
+                     physiognomy.get("physiog_profile_text", "")[:400]
         if phys_short:
-            short_block += f"👁 Фізіогномічний профіль (коротко):\n{phys_short}\n\n"
+            short_block += (
+                "👁 Фізіогномічний профіль (коротко):\n"
+                f"{phys_short}\n\n"
+            )
 
     if short_block:
         await message.answer(short_block, parse_mode="Markdown")
@@ -192,18 +195,18 @@ async def compare(message: types.Message):
 📊 **Порівняння двох аналізів**
 
 1️⃣ Останнє:
-• Емоція: {emo1['dominant_emotion']}
-• Валентність: {emo1['valence']}
-• Стрес: {stress1['microstress_level']}
+• Емоція: {emo1.get('dominant_emotion', '—')}
+• Валентність: {emo1.get('valence', 0)}
+• Стрес: {stress1.get('microstress_level', 0)}
 
 2️⃣ Попереднє:
-• Емоція: {emo2['dominant_emotion']}
-• Валентність: {emo2['valence']}
-• Стрес: {stress2['microstress_level']}
+• Емоція: {emo2.get('dominant_emotion', '—')}
+• Валентність: {emo2.get('valence', 0)}
+• Стрес: {stress2.get('microstress_level', 0)}
 
 🔥 Динаміка:
-• Емоційність: {'покращилась' if emo1['valence'] > emo2['valence'] else 'погіршилась або стабільна'}
-• Стрес: {'зріс' if stress1['microstress_level'] > stress2['microstress_level'] else 'знизився або стабільний'}
+• Емоційність: {'покращилась' if emo1.get('valence', 0) > emo2.get('valence', 0) else 'погіршилась або стабільна'}
+• Стрес: {'зріс' if stress1.get('microstress_level', 0) > stress2.get('microstress_level', 0) else 'знизився або стабільний'}
 """
 
     await message.answer(result)
@@ -221,7 +224,11 @@ async def admin_summary(message: types.Message):
     if len(parts) != 2:
         return await message.answer("Формат: /summary user_id")
 
-    target = int(parts[1])
+    try:
+        target = int(parts[1])
+    except ValueError:
+        return await message.answer("user_id має бути числом.")
+
     reports = get_user_reports(target)
 
     if not reports:
@@ -231,10 +238,11 @@ async def admin_summary(message: types.Message):
     personality = json.loads(reports[0][6])
     professional = json.loads(reports[0][7])
 
+    big_five = personality.get("big_five_scores", {}) or {}
+
     radical_code = personality.get("radical_code") or personality.get("radical_key")
     radical_info = RADICALS.get(radical_code) if radical_code else None
 
-    radical_block = ""
     if radical_info:
         radical_block = (
             f"\nПровідний радикал:\n"
@@ -245,20 +253,22 @@ async def admin_summary(message: types.Message):
     else:
         radical_block = f"\nПсихотип (текст):\n• {personality.get('radical', '—')}\n"
 
+    roles = professional.get("recommended_roles", []) or []
+
     summary = f"""
 👤 **HR Summary для {target}**
 
 {radical_block}
 
 Big Five:
-• Openness: {personality['big_five_scores']['openness']}
-• Conscientiousness: {personality['big_five_scores']['conscientiousness']}
-• Extraversion: {personality['big_five_scores']['extraversion']}
-• Agreeableness: {personality['big_five_scores']['agreeableness']}
-• Neuroticism: {personality['big_five_scores']['neuroticism']}
+• Openness: {big_five.get('openness', 0)}
+• Conscientiousness: {big_five.get('conscientiousness', 0)}
+• Extraversion: {big_five.get('extraversion', 0)}
+• Agreeableness: {big_five.get('agreeableness', 0)}
+• Neuroticism: {big_five.get('neuroticism', 0)}
 
 Рекомендовані ролі:
-• {professional['recommended_roles'][0]}
+• {roles[0] if roles else '—'}
 """
 
     await message.answer(summary)
