@@ -3,6 +3,7 @@ import asyncio
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 
+# === Analyzer modules ===
 from analyzer.face_detector import detect_face_info
 from analyzer.emotion_model import interpret_emotions
 from analyzer.stress_model import detect_microstress
@@ -10,20 +11,35 @@ from analyzer.personality_model import build_personality_profile
 from analyzer.professional_profile import build_professional_profile
 from analyzer.report_builder import build_full_report
 
+# === Database ===
 from database import init_db, save_report, get_user_reports
 
-BOT_TOKEN = os.getenv("8545319800:AAFUvgsv3mB30FSdKR4BqAzYfjW_7GxbEr8", "YOUR_TELEGRAM_BOT_TOKEN")
-ADMIN_IDS = [270799202]  # сюди встав свій Telegram ID
+# ======================================================
+#                  BOT TOKEN (ВИПРАВЛЕНО!)
+# ======================================================
+
+# 1) Railway → Variables → додай:
+#    BOT_TOKEN = 8545319800:AAFUvgsv3mB30FSdKR4BqAzYfjW_7GxbEr8
+#
+# 2) Не можна вказувати токен як ім'я змінної!
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # <-- ТАК ПРАВИЛЬНО
+
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN не знайдено! Додай його у Railway → Variables.")
+
+ADMIN_IDS = [270799202]
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# Ініціалізація бази
 init_db()
 
 
-# ================================
-#           START
-# ================================
+# ======================================================
+#                        START
+# ======================================================
 @dp.message(Command("start"))
 async def start(message: types.Message):
     await message.answer(
@@ -35,63 +51,71 @@ async def start(message: types.Message):
     )
 
 
-# ================================
-#         ОБРОБКА ФОТО
-# ================================
+# ======================================================
+#                   ОБРОБКА ФОТО
+# ======================================================
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
     await message.answer("⏳ Аналізую фото…")
 
     user_id = message.from_user.id
     file_id = message.photo[-1].file_id
+
     file = await bot.get_file(file_id)
 
     os.makedirs("photos", exist_ok=True)
     img_path = f"photos/{user_id}_{file_id}.jpg"
     await bot.download_file(file.file_path, img_path)
 
-    # 1. Аналіз обличчя
+    # 1. Детекція обличчя
     face_info = detect_face_info(img_path)
     if face_info is None:
         return await message.answer("⚠️ Не вдалося розпізнати обличчя.")
 
-    # 2. Емоції
+    # 2. Аналіз емоцій
     emotion_data = interpret_emotions(face_info["emotion"])
 
-    # 3. Стрес
+    # 3. Аналіз мікростресу
     stress_data = detect_microstress(img_path)
 
-    # 4. Особистість (Big Five + Радикал + Опис радикала)
+    # 4. Особистість Big Five + Радикал Пономаренка
     personality = build_personality_profile(face_info, emotion_data, stress_data)
 
-    # 5. Професійні рекомендації
+    # 5. Професійний профіль
     professional = build_professional_profile(personality)
 
-    # 6. Повний текстовий психологічний портрет
+    # 6. Повний психологічний портрет
     full_report = build_full_report(
-        face_info, emotion_data, stress_data,
-        personality, professional
+        face_info,
+        emotion_data,
+        stress_data,
+        personality,
+        professional
     )
 
-    # 7. Зберігаємо в SQLite
+    # 7. Збереження у SQLite
     save_report(
-        user_id, img_path, face_info,
-        emotion_data, stress_data,
-        personality, professional,
+        user_id,
+        img_path,
+        face_info,
+        emotion_data,
+        stress_data,
+        personality,
+        professional,
         full_report
     )
 
-    # 8. Відправляємо текст по частинах (Telegram ліміт)
+    # 8. Відправляємо частинами (Telegram limit 4096)
     chunk = 3500
     for i in range(0, len(full_report), chunk):
         await message.answer(full_report[i:i+chunk])
 
-    await message.answer("💾 Звіт додано в історію.\nПерегляд та порівняння: /compare")
+    await message.answer("💾 Психологічний звіт збережено.\nПерегляд історії: /compare")
 
 
-# ================================
-#        ПОРІВНЯННЯ ФОТО
-# ================================
+# ======================================================
+#          ПОРІВНЯННЯ ОСТАННІХ ДВОХ ЗВІТІВ
+# ======================================================
 @dp.message(Command("compare"))
 async def compare(message: types.Message):
     user_id = message.from_user.id
@@ -104,11 +128,9 @@ async def compare(message: types.Message):
     previous = reports[1]
 
     import json
-    face1 = json.loads(latest[3])
     emo1 = json.loads(latest[4])
     stress1 = json.loads(latest[5])
 
-    face2 = json.loads(previous[3])
     emo2 = json.loads(previous[4])
     stress2 = json.loads(previous[5])
 
@@ -133,7 +155,7 @@ async def compare(message: types.Message):
 - {'Стан став більш позитивним' if emo1['valence'] > emo2['valence'] else 'Стан став менш позитивним'}
 
 💥 **Стрес:**  
-- {'Рівень стресу зріс' if stress1['microstress_level'] > stress2['microstress_level'] else 'Стрес знизився або стабілізувався'}
+- {'Рівень стресу збільшився' if stress1['microstress_level'] > stress2['microstress_level'] else 'Стрес зменшився або стабілізувався'}
 
 🙂 **Домінантна емоція змінилась:**  
 з *{emo2['dominant_emotion']}* → *{emo1['dominant_emotion']}*
@@ -142,13 +164,13 @@ async def compare(message: types.Message):
     await message.answer(comparison)
 
 
-# ================================
-#              АДМІН
-# ================================
+# ======================================================
+#                    АДМІН ЗВІТ
+# ======================================================
 @dp.message(Command("summary"))
 async def admin_summary(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
-        return await message.answer("⛔ Доступ заборонений.")
+        return await message.answer("⛔ У вас немає доступу.")
 
     parts = message.text.split()
     if len(parts) != 2:
@@ -158,7 +180,7 @@ async def admin_summary(message: types.Message):
     reports = get_user_reports(target_user)
 
     if not reports:
-        return await message.answer("У користувача немає збережених аналізів.")
+        return await message.answer("У користувача немає історії.")
 
     import json
     last = reports[0]
@@ -184,16 +206,16 @@ async def admin_summary(message: types.Message):
 ### Основні ризики:
 - {professional['risks'][0]}
 
-### Рекомендований стиль взаємодії:
+### Рекомендації по взаємодії:
 - {professional['communication_style'][0]}
 """
 
     await message.answer(summary)
 
 
-# ================================
-#              RUN
-# ================================
+# ======================================================
+#                        RUN
+# ======================================================
 async def main():
     await dp.start_polling(bot)
 
