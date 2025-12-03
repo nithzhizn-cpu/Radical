@@ -1,5 +1,5 @@
 from typing import Dict
-
+from analyzer.radicals import RADICAL_DESCRIPTIONS
 NEGATIVE_EMOS = {"sad", "fear", "angry", "disgust"}
 POSITIVE_EMOS = {"happy", "surprise"}
 
