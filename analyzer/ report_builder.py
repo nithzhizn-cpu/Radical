@@ -19,6 +19,7 @@ def build_full_report(
     scores = personality["big_five_scores"]
     desc = personality["big_five_descriptions"]
     radical = personality["radical"]
+    radical_desc = personality.get("radical_description", "")
 
     def bf_line(trait_key, name_ua):
         return f"- **{name_ua}** ({scores[trait_key]}/100): {desc[trait_key]}"
@@ -41,7 +42,6 @@ def build_full_report(
 - Загальна емоційна валентність: **{valence}**
 - Інтенсивність емоційної реакції: **{intensity}**
 - Стабільність емоційного профілю: **{stability}**
-
 """
 
     if emo_tendencies:
@@ -90,6 +90,18 @@ def build_full_report(
 - типова стратегія поведінки у конфліктах та стресі.
 
 *(Це евристична оцінка, не клінічна діагностика.)*
+"""
+
+    # 🔥 Додаємо повний текстовий опис радикала, якщо він є
+    if radical_desc:
+        report += f"""
+
+### Розширений опис радикала:
+
+{radical_desc}
+"""
+
+    report += f"""
 
 ---
 
