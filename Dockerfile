@@ -2,6 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# копіюємо всі файли проекту
 COPY . /app
 
 RUN pip install --upgrade pip
